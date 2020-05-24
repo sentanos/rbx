@@ -15,6 +15,8 @@ const XSRF = "X-CSRF-TOKEN"
 const MaxDepth = 3
 const BaseURL = "https://www.roblox.com"
 
+var ParsedBaseURL, perr = url.Parse(BaseURL)
+
 var VerificationInputs = [...]string{
 	"__RequestVerificationToken", // Leave this as first entry!
 }
@@ -22,6 +24,12 @@ var VerificationInputs = [...]string{
 type Client struct {
 	inner         *http.Client
 	CheckRedirect func(*http.Request, []*http.Request) error
+}
+
+func init() {
+	if perr != nil {
+		panic(perr)
+	}
 }
 
 func (client *Client) SetupRedirectHandler() {
@@ -113,6 +121,17 @@ func getVerificationInputs(res *http.Response) (*url.Values, error) {
 		}
 	}
 	return inputs, nil
+}
+
+// Returns the .ROBLOSECURITY session cookie or nil if it doesn't exist
+func (client *Client) GetSession() *http.Cookie {
+	cookies := client.inner.Jar.Cookies(ParsedBaseURL)
+	for _, cookie := range cookies {
+		if cookie.Name == ".ROBLOSECURITY" {
+			return cookie
+		}
+	}
+	return nil
 }
 
 // Creates a request with verification headers and inputs populated.
