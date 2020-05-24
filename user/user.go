@@ -2,22 +2,32 @@ package user
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/pkg/errors"
 	"github.com/sentanos/rbx/client"
 	"net/http"
+	"time"
 )
+
+const MaintainSessionRelogTime = time.Hour * 24
 
 type User struct {
 	Client             *client.Client
 	transactionManager transactionManager
+	maintainSession    bool
+	cancel             chan struct{}
 }
 
-func LoginWithCookie(cookie string) (*User, error) {
+func LoginWithCookie(cookie string, maintainSession bool) (*User, error) {
 	userClient, err := client.FromCookie(cookie)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create client")
 	}
-	return &User{userClient, transactionManager{-1}}, nil
+	user := &User{userClient, transactionManager{-1}, maintainSession, nil}
+	if maintainSession {
+		user.maintainUserSession()
+	}
+	return user, nil
 }
 
 type userInfoResponse struct {
@@ -49,6 +59,32 @@ func (user *User) Status() (int, string, error) {
 
 	user.Client.CheckRedirect = prev
 	return userInfo.UserID, userInfo.UserName, nil
+}
+
+// Maintains the user session and returns a cancel channel
+func (user *User) maintainUserSession() {
+	user.cancel = make(chan struct{})
+	ticker := time.NewTicker(MaintainSessionRelogTime)
+	go (func() {
+		for {
+			select {
+			case <-ticker.C:
+				err := user.Relog()
+				if err != nil {
+					fmt.Printf("error while maintaining user session: %s\n",
+						err.Error())
+				}
+			case <-user.cancel:
+				ticker.Stop()
+				return
+			}
+		}
+	})()
+}
+
+// Stops maintaining sessions
+func (user *User) Close() {
+	close(user.cancel)
 }
 
 func (user *User) Relog() error {
