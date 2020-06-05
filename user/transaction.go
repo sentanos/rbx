@@ -84,8 +84,9 @@ func (user *User) GetTransactions(start int, transactionType TransactionType) (
 		transactionString = "purchase"
 	}
 	form := map[string]string{
-		"transactiontype": transactionString,
-		"startindex":      string(start),
+		"transactiontype":     transactionString,
+		"exclusivestartindex": "0",
+		"startindex":          string(start),
 	}
 	marshaled, err := json.Marshal(form)
 	if err != nil {
