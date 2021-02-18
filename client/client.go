@@ -82,9 +82,7 @@ func (client *Client) handle(req *http.Request, depth int) (*http.Response, erro
 	if err != nil {
 		return res, err
 	}
-	if res.StatusCode == 403 &&
-		(res.Status == "403 XSRF Token Validation Failed" ||
-			res.Status == "403 Token Validation Failed") {
+	if res.StatusCode == 403 {
 		token := res.Header.Get(XSRF)
 		if token == "" {
 			if depth >= MaxDepth {
