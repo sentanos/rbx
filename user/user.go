@@ -16,6 +16,7 @@ type User struct {
 	transactionManager transactionManager
 	maintainSession    bool
 	cancel             chan struct{}
+	UserID             int64
 }
 
 func LoginWithCookie(cookie string, maintainSession bool) (*User, error) {
@@ -23,20 +24,25 @@ func LoginWithCookie(cookie string, maintainSession bool) (*User, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create client")
 	}
-	user := &User{userClient, transactionManager{-1}, maintainSession, nil}
+	user := &User{userClient, transactionManager{-1}, maintainSession, nil, 0}
 	if maintainSession {
 		user.maintainUserSession()
 	}
+	id, _, err := user.Status()
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to retrieve user status")
+	}
+	user.UserID = id
 	return user, nil
 }
 
 type userInfoResponse struct {
-	UserID   int
+	UserID   int64
 	UserName string
 }
 
 // Returns user ID and username of the logged in user
-func (user *User) Status() (int, string, error) {
+func (user *User) Status() (int64, string, error) {
 	prev := user.Client.CheckRedirect
 	user.Client.CheckRedirect = func(req *http.Request,
 		via []*http.Request) error {

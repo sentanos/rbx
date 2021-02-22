@@ -29,8 +29,8 @@ type getByUserIDAPIResponse struct {
 	Errors   []getByUserIDAPIErrors `json:"errors"`
 }
 
-func shortPoll(lastID int, interval time.Duration, fun func(int,
-	chan<- interface{}) (int, error), updates chan interface{},
+func shortPoll(lastID int64, interval time.Duration, fun func(int64,
+	chan<- interface{}) (int64, error), updates chan interface{},
 	errorChan chan<- error, cancel <-chan bool) {
 	var err error
 	ticker := time.NewTicker(interval)

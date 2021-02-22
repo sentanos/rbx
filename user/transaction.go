@@ -1,11 +1,10 @@
 package user
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/pkg/errors"
-	"regexp"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -13,33 +12,42 @@ import (
 
 const RefreshSalesInterval = time.Second * 3
 
-type RobloxUser struct {
-	ID   int
-	Name string
+type RobloxAgent struct {
+	ID   int64  `json:"id"`
+	Type string `json:"type"`
+	Name string `json:"name"`
 }
 
 type RobloxItem struct {
-	ID   int
-	Name string
+	ID   int64  `json:"id"`
+	Type string `json:"type"`
+	Name string `json:"name"`
+}
+
+type RobloxCurrency struct {
+	Amount int    `json:"amount"`
+	Type   string `json:"type"`
 }
 
 type Transaction struct {
-	ID     int
-	Date   time.Time
-	User   RobloxUser
-	Item   RobloxItem
-	Amount int
-	Type   TransactionType
+	ID        int64          `json:"id"`
+	Date      time.Time      `json:"created"`
+	Agent     RobloxAgent    `json:"agent"`
+	Item      RobloxItem     `json:"details"`
+	Currency  RobloxCurrency `json:"currency"`
+	IsPending bool           `json:"isPending"`
+	Type      TransactionType
 }
 
 type transactionManager struct {
-	lastID int
+	lastID int64
 }
 
 func (transaction Transaction) String() string {
-	date := transaction.Date.Format("2006-01-02")
+	date := transaction.Date.Format("2006-01-02 15:04:05")
 	var direction string
 	var transactionString string
+	var pendString string
 	if transaction.Type == Purchase {
 		direction = "from"
 		transactionString = "Purchased"
@@ -47,24 +55,24 @@ func (transaction Transaction) String() string {
 		direction = "to"
 		transactionString = "Sold"
 	}
-	return fmt.Sprintf("[%d] %s item %s (%d) %s %s (%d) for %d robux @ %s",
-		transaction.ID, transactionString, transaction.Item.Name,
-		transaction.Item.ID, direction, transaction.User.Name,
-		transaction.User.ID, transaction.Amount, date)
+	if transaction.IsPending {
+		pendString = "Pending"
+	} else {
+		pendString = ""
+	}
+	return fmt.Sprintf("%s [%d] %s %s %s (%d) %s %s %s (%d) for %d %s @ %s",
+		pendString, transaction.ID, transactionString,
+		strings.ToLower(transaction.Item.Type), transaction.Item.Name,
+		transaction.Item.ID, direction, strings.ToLower(transaction.Agent.
+			Type), transaction.Agent.Name, transaction.Agent.ID,
+		transaction.Currency.Amount, strings.ToLower(transaction.Currency.
+			Type), date)
 }
 
 type transactionsResponse struct {
-	Data []string
-}
-
-type transactionResponse struct {
-	Amount   string
-	Date     string
-	ItemName string `json:"Item_Name"`
-	ItemUrl  string `json:"Item_Url"`
-	Member   string
-	MemberID string `json:"Member_ID"`
-	SaleID   int    `json:"Sale_ID"`
+	PreviousPageCursor *string       `json:"previousPageCursor"`
+	NextPageCursor     *string       `json:"nextPageCursor"`
+	Data               []Transaction `json:"data"`
 }
 
 type TransactionType int
@@ -74,103 +82,43 @@ const (
 	Purchase
 )
 
-func (user *User) GetTransactions(start int, transactionType TransactionType) (
-	[]Transaction, error) {
+func (user *User) GetTransactions(transactionType TransactionType,
+	cursor *string) (
+	[]Transaction, *string, error) {
 	var transactionString string
 	switch transactionType {
 	case Sale:
-		transactionString = "sale"
+		transactionString = "Sale"
 	case Purchase:
-		transactionString = "purchase"
+		transactionString = "Purchase"
 	}
-	form := map[string]string{
-		"transactiontype":     transactionString,
-		"exclusivestartindex": "0",
-		"startindex":          string(start),
+	opt := url.Values{}
+	opt.Set("transactionType", transactionString)
+	opt.Set("limit", "10")
+	if cursor != nil {
+		opt.Set("cursor", *cursor)
 	}
-	marshaled, err := json.Marshal(form)
+	res, err := user.Client.Get("https://economy.roblox.com/v2/users/" +
+		strconv.FormatInt(user.UserID, 10) + "/transactions?" + opt.Encode())
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to marshal json")
-	}
-	res, err := user.Client.Post("https://www.roblox.com/My/money."+
-		"aspx/getmytransactions", "application/json",
-		bytes.NewReader(marshaled))
-	if err != nil {
-		return nil, errors.Wrap(err, "Failed to retrieve transactions")
+		return nil, nil, errors.Wrap(err, "Failed to retrieve transactions")
 	}
 	if res.StatusCode != 200 {
-		return nil, errors.Errorf("Unknown status code %d", res.StatusCode)
+		return nil, nil, errors.Errorf("Unknown status code %d", res.StatusCode)
 	}
-	dataContainer := make(map[string]string)
+	transResp := transactionsResponse{}
 	defer res.Body.Close()
-	err = json.NewDecoder(res.Body).Decode(&dataContainer)
+	err = json.NewDecoder(res.Body).Decode(&transResp)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to parse JSON")
+		return nil, nil, errors.Wrap(err, "Failed to parse JSON")
 	}
-	data, ok := dataContainer["d"]
-	if !ok {
-		return nil, errors.New("No data found")
-	}
-	holder := &transactionsResponse{}
-	err = json.NewDecoder(strings.NewReader(data)).Decode(&holder)
-	if err != nil {
-		return nil, errors.Wrap(err, "Failed to parse data JSON")
-	}
-
-	re := regexp.MustCompile(`https://www\.roblox\.com/library/(\d+)/`)
-	var transactions []Transaction
-	for _, row := range holder.Data {
-		rowContainer := transactionResponse{}
-		err = json.NewDecoder(strings.NewReader(row)).Decode(&rowContainer)
-		if err != nil {
-			return nil, errors.Wrap(err, "Failed to parse row")
-		}
-		transaction := Transaction{
-			User: RobloxUser{
-				Name: rowContainer.Member,
-			},
-			Item: RobloxItem{
-				Name: rowContainer.ItemName,
-			},
-		}
-		transaction.User.ID, err = strconv.Atoi(rowContainer.MemberID)
-		if err != nil {
-			return nil, errors.Wrap(err, "Failed to parse user ID")
-		}
-		matches := re.FindStringSubmatch(rowContainer.ItemUrl)
-		if len(matches) != 2 {
-			return nil, errors.Errorf(
-				"regex match failed: unknown number of matches %d",
-				len(matches))
-		}
-		transaction.Item.ID, err = strconv.Atoi(matches[1])
-		if err != nil {
-			return nil, errors.Wrap(err, "Failed to parse item ID")
-		}
-		amount, err := strconv.Atoi(rowContainer.Amount)
-		if err != nil {
-			return nil, errors.Wrap(err, "Failed to parse amount")
-		}
-		if transactionType == Purchase {
-			transaction.Amount = amount * -1
-		} else {
-			transaction.Amount = amount
-		}
-		date, err := time.Parse("1/2/06", rowContainer.Date)
-		if err != nil {
-			return nil, errors.Wrap(err, "Failed to parse date")
-		}
-		transaction.Date = date
-		transaction.Type = transactionType
-		transaction.ID = rowContainer.SaleID
-		transactions = append(transactions, transaction)
-	}
-	return transactions, nil
+	return transResp.Data, transResp.NextPageCursor, nil
 }
 
-func (user *User) syncSales(lastID int, sales chan<- interface{}) (int, error) {
+func (user *User) syncSales(lastID int64, sales chan<- interface{}) (int64,
+	error) {
 	if lastID == -1 {
-		transactions, err := user.GetTransactions(0, Sale)
+		transactions, _, err := user.GetTransactions(Sale, nil)
 		if err != nil {
 			return lastID, errors.Wrap(err, "Failed to retrieve transactions")
 		}
@@ -178,9 +126,12 @@ func (user *User) syncSales(lastID int, sales chan<- interface{}) (int, error) {
 			return transactions[0].ID, nil
 		}
 	} else {
+		var next *string
 		page := 0
+		next = nil
 		for {
-			transactions, err := user.GetTransactions(page*20, Sale)
+			transactions, n, err := user.GetTransactions(Sale, next)
+			next = n
 			if err != nil {
 				return lastID, errors.Wrapf(err,
 					"Failed to retrieve page %d of transactions", page)
@@ -200,7 +151,7 @@ func (user *User) syncSales(lastID int, sales chan<- interface{}) (int, error) {
 	return lastID, nil
 }
 
-func (user *User) TrackSales(lastID int) (<-chan Transaction, <-chan error,
+func (user *User) TrackSales(lastID int64) (<-chan Transaction, <-chan error,
 	chan<- bool) {
 	updates := make(chan interface{}, 1)
 	newSales := make(chan Transaction, 1)
