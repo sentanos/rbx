@@ -1,22 +1,26 @@
 package user
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/PuerkitoBio/goquery"
 	"github.com/pkg/errors"
 	"io/ioutil"
 	"net/http"
-	"net/url"
 	"strconv"
 	"time"
 )
 
+type getByUsernameAPIRequest struct {
+	Usernames          []string `json:"usernames"`
+	ExcludeBannedUsers bool     `json:"excludeBannedUsers"`
+}
+
 type getByUsernameAPIResponse struct {
-	ID           int    `json:"Id"`
-	Username     string `json:"Username"`
-	ErrorMessage string `json:"errorMessage"`
-	Message      string `json:"message"`
+	Data []struct {
+		UserID int64 `json:"id"`
+	} `json:"data"`
 }
 
 type getByUserIDAPIErrors struct {
@@ -49,32 +53,30 @@ func shortPoll(lastID int64, interval time.Duration, fun func(int64,
 	}
 }
 
-func IDFromUsername(username string) (int, error) {
-	httpRes, err := http.Get(fmt.Sprintf("https://api.roblox.com/users/get-by-username?username=%s", url.QueryEscape(username)))
+func IDFromUsername(username string) (int64, error) {
+	req := getByUsernameAPIRequest{
+		Usernames:          []string{username},
+		ExcludeBannedUsers: false,
+	}
+	body, err := json.Marshal(req)
 	if err != nil {
-		return 0, errors.Wrap(err, "Request failed")
+		return 0, errors.New("marshal request")
+	}
+	httpRes, err := http.Post("https://users.roblox.com/v1/usernames/users", "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		return 0, errors.Wrap(err, "request")
 	}
 	defer httpRes.Body.Close()
 
 	apiResponse := &getByUsernameAPIResponse{}
 	err = json.NewDecoder(httpRes.Body).Decode(apiResponse)
 	if err != nil {
-		return 0, errors.Wrap(err, "Parse JSON failed")
+		return 0, errors.Wrap(err, "decode")
 	}
-	if apiResponse.ErrorMessage != "" || apiResponse.Message != "" {
-		if apiResponse.ErrorMessage == "User not found" {
-			return 0, errors.New("UserNotFound")
-		} else {
-			var message string
-			if apiResponse.ErrorMessage == "" {
-				message = apiResponse.Message
-			} else {
-				message = apiResponse.ErrorMessage
-			}
-			return 0, errors.New(message)
-		}
+	if len(apiResponse.Data) == 0 {
+		return 0, errors.New("UserNotFound")
 	}
-	return apiResponse.ID, nil
+	return apiResponse.Data[0].UserID, nil
 }
 
 func UsernameFromID(userID string) (string, error) {
