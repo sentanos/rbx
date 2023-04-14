@@ -23,14 +23,8 @@ type getByUsernameAPIResponse struct {
 	} `json:"data"`
 }
 
-type getByUserIDAPIErrors struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
 type getByUserIDAPIResponse struct {
-	Username string                 `json:"Username"`
-	Errors   []getByUserIDAPIErrors `json:"errors"`
+	Username string `json:"name"`
 }
 
 func shortPoll(lastID int64, interval time.Duration, fun func(int64,
@@ -60,18 +54,18 @@ func IDFromUsername(username string) (int64, error) {
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
-		return 0, errors.New("marshal request")
+		return 0, errors.New("IDFromUsername marshal request")
 	}
 	httpRes, err := http.Post("https://users.roblox.com/v1/usernames/users", "application/json", bytes.NewBuffer(body))
 	if err != nil {
-		return 0, errors.Wrap(err, "request")
+		return 0, errors.Wrap(err, "IDFromUsername request")
 	}
 	defer httpRes.Body.Close()
 
 	apiResponse := &getByUsernameAPIResponse{}
 	err = json.NewDecoder(httpRes.Body).Decode(apiResponse)
 	if err != nil {
-		return 0, errors.Wrap(err, "decode")
+		return 0, errors.Wrap(err, "IDFromUsername decode")
 	}
 	if len(apiResponse.Data) == 0 {
 		return 0, errors.New("UserNotFound")
@@ -80,28 +74,19 @@ func IDFromUsername(username string) (int64, error) {
 }
 
 func UsernameFromID(userID string) (string, error) {
-	httpRes, err := http.Get(fmt.Sprintf("https://api.roblox.com/users/%s", userID))
+	httpRes, err := http.Get(fmt.Sprintf("https://users.roblox.com/v1/users/%s", userID))
 	if err != nil {
-		return "", errors.Wrap(err, "Request failed")
+		return "", errors.Wrap(err, "UsernameFromID request")
 	}
-	defer httpRes.Body.Close()
+	if httpRes.StatusCode == 404 {
+		return "", errors.New("UserNotFound")
+	}
 
+	defer httpRes.Body.Close()
 	apiResponse := &getByUserIDAPIResponse{}
 	err = json.NewDecoder(httpRes.Body).Decode(apiResponse)
 	if err != nil {
-		return "", errors.Wrap(err, "Parse JSON failed")
-	}
-	if len(apiResponse.Errors) > 0 {
-		fullMessage := ""
-		for i := 0; i < len(apiResponse.Errors); i++ {
-			apiErr := apiResponse.Errors[i]
-			if apiErr.Code == 400 {
-				return "", errors.New("UserNotFound")
-			}
-			fullMessage += apiErr.Message
-			fullMessage += ";"
-		}
-		return "", errors.New(fullMessage)
+		return "", errors.Wrap(err, "UsernameFromID decode")
 	}
 	return apiResponse.Username, nil
 }
