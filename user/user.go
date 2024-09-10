@@ -37,8 +37,8 @@ func LoginWithCookie(cookie string, maintainSession bool) (*User, error) {
 }
 
 type userInfoResponse struct {
-	UserID   int64
-	UserName string
+	UserID   int64  `json:"id"`
+	UserName string `json:"name"`
 }
 
 // Returns user ID and username of the logged in user
@@ -49,12 +49,12 @@ func (user *User) Status() (int64, string, error) {
 		return http.ErrUseLastResponse // Don't follow redirects
 	}
 
-	res, err := user.Client.Get("https://www.roblox.com/mobileapi/userinfo")
+	res, err := user.Client.Get("https://users.roblox.com/v1/users/authenticated")
 	if err != nil {
 		return 0, "", errors.Wrap(err, "Failed to retrieve user info")
 	}
 	defer res.Body.Close()
-	if res.StatusCode == 302 {
+	if res.StatusCode != 200 {
 		return 0, "", errors.New("You are not logged in")
 	}
 	userInfo := &userInfoResponse{}
